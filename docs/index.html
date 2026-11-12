@@ -345,15 +345,31 @@ function syncPayload(){
 }
 async function syncNow(manual){
   const n=S.notif||{};
-  if(!n.enabled||!n.topic)return false;
+  if(!n.enabled)return false;
+  const body=JSON.stringify(syncPayload());
+  const mark=(ok,msg)=>{
+    S.notif=Object.assign({},S.notif,{syncedAt:Date.now(),syncOk:ok});
+    lastSyncAt=Date.now();
+    try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}   /* حفظ مباشر: مش save() عشان ما تعملش حلقة مزامنة لا نهائية */
+    if(manual)toast(msg);
+    return ok;
+  };
   try{
-    const res=await fetch(NTFY_BASE+n.topic,{method:"POST",body:JSON.stringify(syncPayload()),headers:{"Content-Type":"text/plain; charset=utf-8"},keepalive:true});
-    if(res.ok){S.notif=Object.assign({},S.notif,{syncedAt:Date.now(),syncOk:true});lastSyncAt=Date.now();
-      try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}   /* حفظ مباشر: مش save() عشان ما تعملش حلقة مزامنة لا نهائية */
-      if(manual)toast("تمت المزامنة ✅");return true}
-    if(manual)toast("المزامنة رجعت خطأ "+res.status);
-    return false;
+    /* الأولوية لسيرفر الـ Worker (دايماً شغال) — لو مش متظبط نرجع لـ ntfy */
+    if(n.syncUrl){
+      const res=await fetch(n.syncUrl.replace(/\/+$/,"")+"/sync",{method:"POST",body,headers:{"Content-Type":"application/json","Authorization":"Bearer "+(n.syncToken||"")},keepalive:true});
+      if(res.ok)return mark(true,"تمت المزامنة مع السيرفر ✅");
+      if(manual)toast("السيرفر رجّع خطأ "+res.status);
+      return mark(false);
+    }
+    if(n.topic){
+      const res=await fetch(NTFY_BASE+n.topic,{method:"POST",body,headers:{"Content-Type":"text/plain; charset=utf-8"},keepalive:true});
+      if(res.ok)return mark(true,"تمت المزامنة ✅");
+      if(manual)toast("المزامنة رجعت خطأ "+res.status);
+      return mark(false);
+    }
   }catch(e){if(manual)toast("مفيش نت — المزامنة اتأجلت");return false}
+  return false;
 }
 let syncT, lastSyncAt=0;
 function scheduleSync(){
@@ -388,9 +404,10 @@ function pushBoxHtml(s){
   <div class="card stack">
     <div class="sec-h" style="margin:0"><h2 style="font-size:1rem">مزامنة الجدول</h2></div>
     <span class="muted small">التطبيق بيبعت جدولك للسيرفر عشان يبعتلك التنبيهات في وقتها. آخر مزامنة: <b>${synced}</b></span>
-    <div class="field">مفتاح المزامنة<input id="syncTopic" value="${esc(n.topic||"")}" dir="ltr" class="num" readonly></div>
+    <div class="field">عنوان السيرفر<input id="syncUrl" value="${esc(n.syncUrl||"")}" dir="ltr" placeholder="https://mishwari-worker.workers.dev"></div>
+    <div class="field">رمز المزامنة<input id="syncToken" type="password" value="${esc(n.syncToken||"")}" dir="ltr" placeholder="الرمز السري"></div>
     <div class="row"><button class="btn ink" id="syncNow">زامن دلوقتي</button><button class="btn ghost" id="syncCopy">نسخ المفتاح</button></div>
-    <span class="muted small">المفتاح ده هو اللي الـ PC بيحتاجه ي-know يقرأ منه. لما تضيف أو تعدّل ميعاد، المزامنة بتحصل لوحدها.</span>
+    <span class="muted small">لو عنوان السيرفر فاضي، المزامنة هتروح لقناة ntfy (محتاجة PC شغال). ملاحظة: لو ضفت سيرفر وغيّرته، امسح القيمة عشان ترجع لـ ntfy.</span>
   </div>
   <div class="card"><button class="btn danger" id="pushOff" style="width:100%">إلغاء الاشتراك</button></div>`;
 }
@@ -408,6 +425,8 @@ async function refreshPushBox(){
   const af=document.querySelector("#pushAfter");af&&(af.onchange=()=>{S.notif=Object.assign({},S.notif,{after:af.checked});save();scheduleSync()});
   const sn=document.querySelector("#syncNow");sn&&(sn.onclick=()=>syncNow(true));
   const sc=document.querySelector("#syncCopy");sc&&(sc.onclick=()=>copyText((S.notif&&S.notif.topic)||""));
+  const su=document.querySelector("#syncUrl");su&&(su.onchange=()=>{S.notif=Object.assign({},S.notif,{syncUrl:su.value.trim()});save();toast("اتحفظ عنوان السيرفر")});
+  const stk=document.querySelector("#syncToken");stk&&(stk.onchange=()=>{S.notif=Object.assign({},S.notif,{syncToken:stk.value.trim()});save();toast("اتحفظ رمز المزامنة")});
 }
 
 /* ================= day model ================= */
