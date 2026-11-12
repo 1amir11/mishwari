@@ -72,7 +72,7 @@ self.addEventListener("notificationclick", e => {
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
       for (const c of list) {
         if (c.url.startsWith(self.location.origin)) {
-          c.postMessage({ type: "notification-click", url });
+          c.postMessage({ type: "notification-click", url, date: (e.notification.data && e.notification.data.date) || null });
           return c.focus();
         }
       }

@@ -224,7 +224,8 @@ const KEY="mishwari:v1";
 const DEF={rate:150,centers:[],days:{},weekly:{}};
 let S;
 try{S=Object.assign({},DEF,JSON.parse(localStorage.getItem(KEY)||"{}"))}catch(e){S={...DEF}}
-function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toast("المساحة مليانة، الحفظ ما نجحش")}}
+var syncReady=false;
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toast("المساحة مليانة، الحفظ ما نجحش")}if(syncReady)scheduleSync()}
 if(navigator.storage&&navigator.storage.persist){navigator.storage.persist().catch(()=>{})}
 
 /* ================= helpers ================= */
@@ -258,9 +259,28 @@ const ICON={
   cal:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4.5" width="18" height="16" rx="3"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></svg>'
 };
 
-/* ================= Web Push ================= */
+/* ================= Web Push + المزامنة ================= */
 const VAPID_PUBLIC="BFfZJep0Ysf6-mytm5H87B_CZar5yNIkf8LJwSDCrut2W54eoa6SkaRu7MkrawC4UJj9L1OfLUcELEq_jxpXDHs";
+const NTFY_BASE="https://ntfy.sh/";
 const urlB64ToU8A=b64=>{const p=b64.replace(/-/g,"+").replace(/_/g,"/");const raw=atob(p+"=".repeat((4-p.length%4)%4));return Uint8Array.from(raw,c=>c.charCodeAt(0))};
+/* ArrayBuffer -> base64url (ده اللي كان ناقص: getKey بترجع ArrayBuffer و JSON.stringify بيحوّلها {}) */
+const b64u=buf=>{if(!buf||!buf.byteLength)return"";const a=new Uint8Array(buf);let s="";for(let i=0;i<a.length;i++)s+=String.fromCharCode(a[i]);return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")};
+const subKeys=sub=>({p256dh:b64u(sub.getKey("p256dh")),auth:b64u(sub.getKey("auth"))});
+const newTopic=()=>"mishwari-"+Array.from(crypto.getRandomValues(new Uint8Array(9))).map(x=>x.toString(16).padStart(2,"0")).join("");
+/* ترقيّة: لو الاشتراك موجود بس المفاتيح مش متسجّلة (نسخة قديمة)، نرمّمها من الاشتراك الحي */
+async function ensureSubKeys(){
+  try{
+    const regs=await navigator.serviceWorker.getRegistrations();if(!regs.length)return;
+    const s=await regs[0].pushManager.getSubscription();if(!s)return;
+    const k=subKeys(s);if(!k.p256dh||!k.auth)return;
+    if(!S.notif||S.notif.endpoint!==s.endpoint||!S.notif.p256dh||!S.notif.auth){
+      S.notif=Object.assign({},S.notif,{enabled:true,endpoint:s.endpoint,p256dh:k.p256dh,auth:k.auth});
+      if(!S.notif.topic)S.notif.topic=newTopic();
+      save();
+    }
+  }catch(e){}
+}
+
 async function pushState(){
   const out={supported:"Notification" in window&&"PushManager" in window,perm:"denied",sub:null,sw:false};
   if(!out.supported)return out;
@@ -275,8 +295,10 @@ async function enablePush(){
     const reg=await navigator.serviceWorker.ready;
     let sub=await reg.pushManager.getSubscription();
     if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlB64ToU8A(VAPID_PUBLIC)});
-    S.notif=Object.assign({},S.notif,{enabled:true,endpoint:sub.endpoint,key:sub.getKey?sub.getKey("p256dh"):null,auth:sub.getKey?sub.getKey("auth"):null,at:Date.now()});
-    save();toast("تم تفعيل الإشعارات ✅");await refreshPushBox();
+    const k=subKeys(sub);
+    const topic=(S.notif&&S.notif.topic)||newTopic();
+    S.notif=Object.assign({},S.notif,{enabled:true,endpoint:sub.endpoint,p256dh:k.p256dh,auth:k.auth,topic,at:Date.now()});
+    save();toast("تم تفعيل الإشعارات ✅");await refreshPushBox();scheduleSync();
   }catch(e){toast("مش قادرين نشترك دلوقتي: "+e.message)}
 }
 async function disablePush(){
@@ -295,27 +317,75 @@ async function copyText(t){
     const ta=document.createElement("textarea");ta.value=t;document.body.appendChild(ta);ta.select();try{document.execCommand("copy");toast("اتنسخ ✅")}catch(_){toast("انسخ يدوي")}ta.remove();
   }
 }
+
+/* ---------- المزامنة: الموبايل بيبعت جدوله للسيرفر عن طريق ntfy ---------- */
+function slotStamp(date,hm,offMin){
+  const d=parse(date);const [h,m]=String(hm||"00:00").split(":").map(Number);
+  d.setHours(h||0,m||0,0,0);d.setMinutes(d.getMinutes()+(offMin||0));return d.getTime();
+}
+function syncPayload(){
+  const n=S.notif||{};const t=today();const appts=[];const transported={};
+  for(let i=0;i<3;i++){
+    const d=addDays(t,i);const day=S.days[d];if(!day)continue;
+    for(const it of (day.items||[])){
+      if(it.status==="off")continue;
+      appts.push({
+        id:it.id,date:d,start:it.start||"",end:it.end||"",
+        center:(center(it.centerId)||{}).name||"سنتر",status:it.status||"wait",
+        remindAt:n.before!==false?slotStamp(d,it.start,-60):0,
+        transportAt:n.after!==false&&it.end?slotStamp(d,it.end,15):0
+      });
+    }
+  }
+  Object.keys(S.days).forEach(d=>{transported[d]=((S.days[d].transport||[]).length>0)});
+  return {v:1,at:Date.now(),rate:S.rate,
+    notif:{hour:n.hour!=null?n.hour:8,before:n.before!==false,after:n.after!==false},
+    appts,transported,
+    sub:(n.endpoint&&n.p256dh)?{endpoint:n.endpoint,keys:{p256dh:n.p256dh,auth:n.auth}}:null};
+}
+async function syncNow(manual){
+  const n=S.notif||{};
+  if(!n.enabled||!n.topic)return false;
+  try{
+    const res=await fetch(NTFY_BASE+n.topic,{method:"POST",body:JSON.stringify(syncPayload()),headers:{"Content-Type":"text/plain; charset=utf-8"},keepalive:true});
+    if(res.ok){S.notif=Object.assign({},S.notif,{syncedAt:Date.now(),syncOk:true});save();if(manual)toast("تمت المزامنة ✅");return true}
+    if(manual)toast("المزامنة رجعت خطأ "+res.status);
+    return false;
+  }catch(e){if(manual)toast("مفيش نت — المزامنة اتأجلت");return false}
+}
+let syncT;
+function scheduleSync(){clearTimeout(syncT);syncT=setTimeout(()=>syncNow(false),2500)}
+
 function pushBoxHtml(s){
   if(!s.supported)return `<div class="card"><span class="muted small">المتصفح ده مش بيدعم إشعارات Web Push. جرّب كروم.</span></div>`;
   if(s.perm==="denied")return `<div class="card stack">
     <div class="confirm" style="background:var(--fare-soft);color:var(--fare)"><span>الإذن مرفوض. علشان تشغّل الإشعارات: افتح إعدادات المتصفح ← الإشعارات ← اسم الموقع ← Allow، وبعدين افتح التطبيق تاني.</span></div>
     <button class="btn ghost" id="pushCheck">راجع الإذن تاني</button></div>`;
   if(s.perm==="default")return `<div class="card stack">
-    <span class="muted small">الإشعارات مقفولة. لما تفعّلها هتستقبل تنبيه بجدول النهارده وقبل أي ميعاد بساعة.</span>
+    <span class="muted small">الإشعارات مقفولة. لما تفعّلها هتستقبل تنبيه قبل أي حصة بساعة، وتذكير بفلوس المواصلات بعدها.</span>
     <button class="btn sun" id="pushOn">فعّل الإشعارات</button></div>`;
   if(!s.sub)return `<div class="card stack">
     <span class="muted small">الإذن اتسمح، بس الاشتراك لسه مش مكتمل. (محتاج الـ service worker يكون جاهز — اعمل refresh مرة واحدة.)</span>
     <button class="btn sun" id="pushOn">كمّل الاشتراك</button></div>`;
-  const ep=(s.sub.endpoint||"").slice(-28);
+  const ep=(s.sub.endpoint||"").slice(-28);const n=S.notif||{};
+  const synced=n.syncedAt?new Date(n.syncedAt).toLocaleString("ar-EG",{hour:"2-digit",minute:"2-digit"}):"لسه";
   return `<div class="card stack">
     <div class="daytoggle"><div><b>الإشعارات مفعّلة</b><div class="muted small">مسجّل كـ Push Subscription ✅</div></div>
       <label class="switch"><input type="checkbox" id="pushToggle" checked aria-label="فعّل الإشعارات"><span></span></label></div>
-    <div class="field">موعد التذكير اليومي<input type="time" id="pushHour" value="${S.notif&&S.notif.hour!=null?S.notif.hour:8}"></div>
-    <label class="check"><input type="checkbox" id="pushBefore" ${S.notif&&S.notif.before!==false?"checked":""}> تنبيه قبل أي ميعاد بساعة</label>
+    <label class="check"><input type="checkbox" id="pushBefore" ${n.before!==false?"checked":""}> تنبيه قبل أي حصة بساعة</label>
+    <label class="check"><input type="checkbox" id="pushAfter" ${n.after!==false?"checked":""}> بعد الحصة: ذكّرني بفلوس المواصلات</label>
+    <div class="field">موعد الملخص اليومي<input type="time" id="pushHour" value="${n.hour!=null?n.hour:8}"></div>
     <div class="row"><button class="btn ink" id="pushTest">اختبار إشعار</button><button class="btn ghost" id="pushCopy">نسخ بيانات الاشتراك</button></div>
     <span class="muted small">الاشتراك بيبدأ بـ …${esc(ep)}</span>
-    <span class="muted small">عشان السيرفر يقدر يبعت، بيانات الاشتراك لازم تتسجل عنده (الخطوة الجاية).</span>
-    <button class="btn danger" id="pushOff">إلغاء الاشتراك</button></div>`;
+  </div>
+  <div class="card stack">
+    <div class="sec-h" style="margin:0"><h2 style="font-size:1rem">مزامنة الجدول</h2></div>
+    <span class="muted small">التطبيق بيبعت جدولك للسيرفر عشان يبعتلك التنبيهات في وقتها. آخر مزامنة: <b>${synced}</b></span>
+    <div class="field">مفتاح المزامنة<input id="syncTopic" value="${esc(n.topic||"")}" dir="ltr" class="num" readonly></div>
+    <div class="row"><button class="btn ink" id="syncNow">زامن دلوقتي</button><button class="btn ghost" id="syncCopy">نسخ المفتاح</button></div>
+    <span class="muted small">المفتاح ده هو اللي الـ PC بيحتاجه ي-know يقرأ منه. لما تضيف أو تعدّل ميعاد، المزامنة بتحصل لوحدها.</span>
+  </div>
+  <div class="card"><button class="btn danger" id="pushOff" style="width:100%">إلغاء الاشتراك</button></div>`;
 }
 async function refreshPushBox(){
   const el=document.querySelector("#pushBox");if(!el)return;
@@ -324,10 +394,13 @@ async function refreshPushBox(){
   const off=document.querySelector("#pushOff");off&&(off.onclick=disablePush);
   const chk=document.querySelector("#pushCheck");chk&&(chk.onclick=refreshPushBox);
   const tst=document.querySelector("#pushTest");tst&&(tst.onclick=testNotification);
-  const cp=document.querySelector("#pushCopy");cp&&(cp.onclick=()=>copyText(JSON.stringify({endpoint:s.sub.endpoint,keys:{p256dh:s.sub.getKey("p256dh"),auth:s.sub.getKey("auth")}},null,1)));
+  const cp=document.querySelector("#pushCopy");cp&&(cp.onclick=()=>{const k=s.sub?subKeys(s.sub):{p256dh:"",auth:""};copyText(JSON.stringify({endpoint:s.sub.endpoint,keys:k},null,1))});
   const tg=document.querySelector("#pushToggle");tg&&(tg.onchange=()=>{tg.checked?enablePush():disablePush()});
-  const hr=document.querySelector("#pushHour");hr&&(hr.onchange=()=>{S.notif=Object.assign({},S.notif,{hour:+hr.value});save();toast("التذكير اليومي الساعة "+hr.value)});
-  const bf=document.querySelector("#pushBefore");bf&&(bf.onchange=()=>{S.notif=Object.assign({},S.notif,{before:bf.checked});save()});
+  const hr=document.querySelector("#pushHour");hr&&(hr.onchange=()=>{S.notif=Object.assign({},S.notif,{hour:+hr.value});save();toast("الملخص اليومي الساعة "+hr.value)});
+  const bf=document.querySelector("#pushBefore");bf&&(bf.onchange=()=>{S.notif=Object.assign({},S.notif,{before:bf.checked});save();scheduleSync()});
+  const af=document.querySelector("#pushAfter");af&&(af.onchange=()=>{S.notif=Object.assign({},S.notif,{after:af.checked});save();scheduleSync()});
+  const sn=document.querySelector("#syncNow");sn&&(sn.onclick=()=>syncNow(true));
+  const sc=document.querySelector("#syncCopy");sc&&(sc.onclick=()=>copyText((S.notif&&S.notif.topic)||""));
 }
 
 /* ================= day model ================= */
@@ -623,11 +696,13 @@ $("#fab").onclick=()=>view==="centers"?centerSheet():slotSheet();
 /* refresh the "now" highlight and roll over to a new day */
 let lastDay=today();setInterval(()=>{if(today()!==lastDay){if(cur===lastDay)cur=today();lastDay=today()}if(view==="today"&&$("#sheet").hidden&&document.activeElement.tagName!=="TEXTAREA"&&document.activeElement.tagName!=="INPUT")render()},60000);
 render();
+syncReady=true;
+ensureSubKeys().then(()=>syncNow(false));
 
 if("serviceWorker" in navigator&&location.protocol!=="file:"){
   navigator.serviceWorker.register("sw.js").catch(()=>{});
   navigator.serviceWorker.addEventListener("message",e=>{
-    if(e.data&&e.data.type==="notification-click"){cur=today();go("today")}
+    if(e.data&&e.data.type==="notification-click"){cur=e.data.date||today();go("today")}
   });
 }
 </script>
