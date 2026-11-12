@@ -258,6 +258,78 @@ const ICON={
   cal:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4.5" width="18" height="16" rx="3"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></svg>'
 };
 
+/* ================= Web Push ================= */
+const VAPID_PUBLIC="BFfZJep0Ysf6-mytm5H87B_CZar5yNIkf8LJwSDCrut2W54eoa6SkaRu7MkrawC4UJj9L1OfLUcELEq_jxpXDHs";
+const urlB64ToU8A=b64=>{const p=b64.replace(/-/g,"+").replace(/_/g,"/");const raw=atob(p+"=".repeat((4-p.length%4)%4));return Uint8Array.from(raw,c=>c.charCodeAt(0))};
+async function pushState(){
+  const out={supported:"Notification" in window&&"PushManager" in window,perm:"denied",sub:null,sw:false};
+  if(!out.supported)return out;
+  out.perm=Notification.permission;
+  try{const regs=await navigator.serviceWorker.getRegistrations();out.sw=regs.length>0;if(out.sw&&out.perm==="granted"){const r=regs[0];out.sub=await r.pushManager.getSubscription()}}catch(e){}
+  return out;
+}
+async function enablePush(){
+  const perm=await Notification.requestPermission();
+  if(perm!=="granted"){toast("محتاجين إذن الإشعارات من المتصفح");await refreshPushBox();return}
+  try{
+    const reg=await navigator.serviceWorker.ready;
+    let sub=await reg.pushManager.getSubscription();
+    if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlB64ToU8A(VAPID_PUBLIC)});
+    S.notif=Object.assign({},S.notif,{enabled:true,endpoint:sub.endpoint,key:sub.getKey?sub.getKey("p256dh"):null,auth:sub.getKey?sub.getKey("auth"):null,at:Date.now()});
+    save();toast("تم تفعيل الإشعارات ✅");await refreshPushBox();
+  }catch(e){toast("مش قادرين نشترك دلوقتي: "+e.message)}
+}
+async function disablePush(){
+  try{const regs=await navigator.serviceWorker.getRegistrations();for(const r of regs){const s=await r.pushManager.getSubscription();if(s)await s.unsubscribe()}}catch(e){}
+  S.notif=Object.assign({},S.notif,{enabled:false,endpoint:null});
+  save();toast("الإشعارات اتقفلت");await refreshPushBox();
+}
+async function testNotification(){
+  try{
+    const reg=await navigator.serviceWorker.ready;
+    await reg.showNotification("مشواري · إشعار تجريبي",{body:"لو شفت الرسالة دي، يبقى مسار الإشعارات شغال ✅",icon:"icon-192.png",badge:"icon-192.png",tag:"mishwari-test",dir:"rtl",lang:"ar",vibrate:[120,60,120],data:{url:"./"}});
+  }catch(e){toast("مقدرناش نبيّن الإشعار: "+e.message)}
+}
+async function copyText(t){
+  try{await navigator.clipboard.writeText(t);toast("اتنسخ ✅")}catch(e){
+    const ta=document.createElement("textarea");ta.value=t;document.body.appendChild(ta);ta.select();try{document.execCommand("copy");toast("اتنسخ ✅")}catch(_){toast("انسخ يدوي")}ta.remove();
+  }
+}
+function pushBoxHtml(s){
+  if(!s.supported)return `<div class="card"><span class="muted small">المتصفح ده مش بيدعم إشعارات Web Push. جرّب كروم.</span></div>`;
+  if(s.perm==="denied")return `<div class="card stack">
+    <div class="confirm" style="background:var(--fare-soft);color:var(--fare)"><span>الإذن مرفوض. علشان تشغّل الإشعارات: افتح إعدادات المتصفح ← الإشعارات ← اسم الموقع ← Allow، وبعدين افتح التطبيق تاني.</span></div>
+    <button class="btn ghost" id="pushCheck">راجع الإذن تاني</button></div>`;
+  if(s.perm==="default")return `<div class="card stack">
+    <span class="muted small">الإشعارات مقفولة. لما تفعّلها هتستقبل تنبيه بجدول النهارده وقبل أي ميعاد بساعة.</span>
+    <button class="btn sun" id="pushOn">فعّل الإشعارات</button></div>`;
+  if(!s.sub)return `<div class="card stack">
+    <span class="muted small">الإذن اتسمح، بس الاشتراك لسه مش مكتمل. (محتاج الـ service worker يكون جاهز — اعمل refresh مرة واحدة.)</span>
+    <button class="btn sun" id="pushOn">كمّل الاشتراك</button></div>`;
+  const ep=(s.sub.endpoint||"").slice(-28);
+  return `<div class="card stack">
+    <div class="daytoggle"><div><b>الإشعارات مفعّلة</b><div class="muted small">مسجّل كـ Push Subscription ✅</div></div>
+      <label class="switch"><input type="checkbox" id="pushToggle" checked aria-label="فعّل الإشعارات"><span></span></label></div>
+    <div class="field">موعد التذكير اليومي<input type="time" id="pushHour" value="${S.notif&&S.notif.hour!=null?S.notif.hour:8}"></div>
+    <label class="check"><input type="checkbox" id="pushBefore" ${S.notif&&S.notif.before!==false?"checked":""}> تنبيه قبل أي ميعاد بساعة</label>
+    <div class="row"><button class="btn ink" id="pushTest">اختبار إشعار</button><button class="btn ghost" id="pushCopy">نسخ بيانات الاشتراك</button></div>
+    <span class="muted small">الاشتراك بيبدأ بـ …${esc(ep)}</span>
+    <span class="muted small">عشان السيرفر يقدر يبعت، بيانات الاشتراك لازم تتسجل عنده (الخطوة الجاية).</span>
+    <button class="btn danger" id="pushOff">إلغاء الاشتراك</button></div>`;
+}
+async function refreshPushBox(){
+  const el=document.querySelector("#pushBox");if(!el)return;
+  const s=await pushState();el.innerHTML=pushBoxHtml(s);
+  const on=document.querySelector("#pushOn");on&&(on.onclick=enablePush);
+  const off=document.querySelector("#pushOff");off&&(off.onclick=disablePush);
+  const chk=document.querySelector("#pushCheck");chk&&(chk.onclick=refreshPushBox);
+  const tst=document.querySelector("#pushTest");tst&&(tst.onclick=testNotification);
+  const cp=document.querySelector("#pushCopy");cp&&(cp.onclick=()=>copyText(JSON.stringify({endpoint:s.sub.endpoint,keys:{p256dh:s.sub.getKey("p256dh"),auth:s.sub.getKey("auth")}},null,1)));
+  const tg=document.querySelector("#pushToggle");tg&&(tg.onchange=()=>{tg.checked?enablePush():disablePush()});
+  const hr=document.querySelector("#pushHour");hr&&(hr.onchange=()=>{S.notif=Object.assign({},S.notif,{hour:+hr.value});save();toast("التذكير اليومي الساعة "+hr.value)});
+  const bf=document.querySelector("#pushBefore");bf&&(bf.onchange=()=>{S.notif=Object.assign({},S.notif,{before:bf.checked});save()});
+}
+
 /* ================= day model ================= */
 let view="today", cur=today(), period="month", month=today().slice(0,7);
 function getDay(date){return S.days[date]}
@@ -505,6 +577,7 @@ const standalone=()=>matchMedia("(display-mode: standalone)").matches||navigator
 function renderSettings(){
   let h="";
   if(!standalone())h+=`<div class="install"><p>${deferredInstall?"نزّل مشواري على الموبايل وافتحه من أيقونته":"علشان تنزله: من قايمة كروم (⋮) اختار «تثبيت التطبيق» أو «إضافة للشاشة الرئيسية»"}</p>${deferredInstall?`<button class="btn ink" id="inst">تثبيت</button>`:""}</div>`;
+  h+=`<div class="sec-h"><h2>التفعيلات</h2></div><div id="pushBox"><div class="card"><span class="muted small">بنتحقق من حالة الإشعارات...</span></div></div>`;
   h+=`<div class="sec-h"><h2>اليومية</h2></div><div class="card stack">
     <label class="field">قيمة اليومية (ج.م)<input type="number" inputmode="decimal" id="rate" class="num" value="${S.rate}"></label>
     <span class="muted small">التغيير بيسري على الأيام الجديدة بس. الأيام اللي فاتت بتفضل بيوميتها.</span>
@@ -518,6 +591,7 @@ function renderSettings(){
   </div>
   <p class="muted small" style="text-align:center">مشواري · ${Object.keys(S.days).length} يوم · ${S.centers.length} سنتر</p>`;
   $("#main").innerHTML=h;
+  refreshPushBox();
   $("#inst")&&($("#inst").onclick=async()=>{deferredInstall.prompt();await deferredInstall.userChoice.catch(()=>{});deferredInstall=null;render()});
   $("#saveRate").onclick=()=>{const r=+$("#rate").value;if(!(r>=0)){toast("اكتب رقم صحيح");return}
     const old=S.rate;S.rate=r;const td=getDay(today());if(td&&td.wage===old&&!td.touched)td.wage=r;save();render();toast("اليومية بقت "+fmt(r)+" ج.م")};
@@ -550,7 +624,12 @@ $("#fab").onclick=()=>view==="centers"?centerSheet():slotSheet();
 let lastDay=today();setInterval(()=>{if(today()!==lastDay){if(cur===lastDay)cur=today();lastDay=today()}if(view==="today"&&$("#sheet").hidden&&document.activeElement.tagName!=="TEXTAREA"&&document.activeElement.tagName!=="INPUT")render()},60000);
 render();
 
-if("serviceWorker" in navigator&&location.protocol!=="file:"){navigator.serviceWorker.register("sw.js").catch(()=>{})}
+if("serviceWorker" in navigator&&location.protocol!=="file:"){
+  navigator.serviceWorker.register("sw.js").catch(()=>{});
+  navigator.serviceWorker.addEventListener("message",e=>{
+    if(e.data&&e.data.type==="notification-click"){cur=today();go("today")}
+  });
+}
 </script>
 </body>
 </html>

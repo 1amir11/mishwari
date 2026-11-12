@@ -1,5 +1,5 @@
-// مشواري service worker: keeps the app working with no internet.
-const VERSION = "mishwari-v1";
+// مشواري service worker: keeps the app working with no internet + receives Web Push.
+const VERSION = "mishwari-v2";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon-maskable-512.png"];
 
 self.addEventListener("install", e => {
@@ -40,4 +40,47 @@ self.addEventListener("fetch", e => {
       return res;
     }).catch(() => caches.match(req).then(r => r || caches.match("index.html")))
   );
+});
+
+/* ================= Web Push ================= */
+self.addEventListener("push", e => {
+  let data = {};
+  if (e.data) {
+    try { data = e.data.json(); }
+    catch (_) { data = { body: e.data.text() }; }
+  }
+  const title = data.title || "مشواري";
+  const options = {
+    body: data.body || "",
+    icon: "icon-192.png",
+    badge: "icon-192.png",
+    tag: data.tag || "mishwari",
+    renotify: !!data.tag,
+    dir: "rtl",
+    lang: "ar",
+    vibrate: [120, 60, 120],
+    data: data.data || { url: "./" },
+    actions: [{ action: "open", title: "افتح" }, { action: "later", title: "بعدين" }]
+  };
+  e.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener("notificationclick", e => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || "./";
+  e.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
+      for (const c of list) {
+        if (c.url.startsWith(self.location.origin)) {
+          c.postMessage({ type: "notification-click", url });
+          return c.focus();
+        }
+      }
+      return self.clients.openWindow(url);
+    })
+  );
+});
+
+self.addEventListener("notificationclose", e => {
+  e.waitUntil(Promise.resolve());
 });
