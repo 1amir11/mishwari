@@ -399,6 +399,7 @@ function pushBoxHtml(s){
     <label class="check"><input type="checkbox" id="pushAfter" ${n.after!==false?"checked":""}> بعد الحصة: ذكّرني بفلوس المواصلات</label>
     <div class="field">موعد الملخص اليومي<input type="time" id="pushHour" value="${n.hour!=null?n.hour:8}"></div>
     <div class="row"><button class="btn ink" id="pushTest">اختبار إشعار</button><button class="btn ghost" id="pushCopy">نسخ بيانات الاشتراك</button></div>
+    <div class="row"><button class="btn ghost" id="pushTestServer">اختبار من السيرفر</button></div>
     <span class="muted small">الاشتراك بيبدأ بـ …${esc(ep)}</span>
   </div>
   <div class="card stack">
@@ -427,6 +428,16 @@ async function refreshPushBox(){
   const sc=document.querySelector("#syncCopy");sc&&(sc.onclick=()=>copyText((S.notif&&S.notif.topic)||""));
   const su=document.querySelector("#syncUrl");su&&(su.onchange=()=>{S.notif=Object.assign({},S.notif,{syncUrl:su.value.trim()});save();toast("اتحفظ عنوان السيرفر")});
   const stk=document.querySelector("#syncToken");stk&&(stk.onchange=()=>{S.notif=Object.assign({},S.notif,{syncToken:stk.value.trim()});save();toast("اتحفظ رمز المزامنة")});
+  const pts=document.querySelector("#pushTestServer");
+  pts&&(pts.onclick=async()=>{
+    const nn=S.notif||{};
+    if(!nn.syncUrl){toast("مفيش عنوان سيرفر — املاه الأول");return}
+    try{
+      const r=await fetch(nn.syncUrl.replace(/\/+$/,"")+"/test-push",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+(nn.syncToken||"")},body:"{}"});
+      const j=await r.json().catch(()=>({}));
+      toast(r.ok&&j.ok?"الإشعار اتبعت من السيرفر ✅":("السيرفر رجّع: "+JSON.stringify(j)));
+    }catch(e){toast("مقدرناش نوصل للسيرفر: "+e.message)}
+  });
 }
 
 /* ================= day model ================= */
