@@ -348,13 +348,20 @@ async function syncNow(manual){
   if(!n.enabled||!n.topic)return false;
   try{
     const res=await fetch(NTFY_BASE+n.topic,{method:"POST",body:JSON.stringify(syncPayload()),headers:{"Content-Type":"text/plain; charset=utf-8"},keepalive:true});
-    if(res.ok){S.notif=Object.assign({},S.notif,{syncedAt:Date.now(),syncOk:true});save();if(manual)toast("تمت المزامنة ✅");return true}
+    if(res.ok){S.notif=Object.assign({},S.notif,{syncedAt:Date.now(),syncOk:true});lastSyncAt=Date.now();
+      try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}   /* حفظ مباشر: مش save() عشان ما تعملش حلقة مزامنة لا نهائية */
+      if(manual)toast("تمت المزامنة ✅");return true}
     if(manual)toast("المزامنة رجعت خطأ "+res.status);
     return false;
   }catch(e){if(manual)toast("مفيش نت — المزامنة اتأجلت");return false}
 }
-let syncT;
-function scheduleSync(){clearTimeout(syncT);syncT=setTimeout(()=>syncNow(false),2500)}
+let syncT, lastSyncAt=0;
+function scheduleSync(){
+  clearTimeout(syncT);
+  /* مزامنة واحدة كل دقيقة على الأكثر (ntfy المجاني محدود بعدد الطلبات) */
+  const wait=lastSyncAt?Math.max(2500,60000-(Date.now()-lastSyncAt)):2500;
+  syncT=setTimeout(()=>syncNow(false),wait);
+}
 
 function pushBoxHtml(s){
   if(!s.supported)return `<div class="card"><span class="muted small">المتصفح ده مش بيدعم إشعارات Web Push. جرّب كروم.</span></div>`;
