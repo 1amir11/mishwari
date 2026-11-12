@@ -1,0 +1,2 @@
+# force LF for the published web files (avoids CRLF noise in the service worker / manifest)
+docs/* text=auto eol=lf
