@@ -91,9 +91,9 @@ main{padding:16px max(16px,env(safe-area-inset-right,0px)) calc(160px + env(safe
 .lrow .tx b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lrow .tx span{font-size:.76rem;color:var(--muted)}
 .lrow .amt{font-family:var(--head);font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
-.amt.in{color:var(--money)} .amt.out{color:var(--fare)} .amt.tab{color:var(--tab)} .amt.adj{color:var(--warn)} .amt.move{color:var(--muted)}
+.amt.in{color:var(--money)} .amt.out{color:var(--fare)} .amt.tab{color:var(--tab)} .amt.adj{color:var(--warn)} .amt.move{color:var(--muted)} .amt.pay{color:var(--money)} .amt.open{color:var(--muted)}
 .pockets{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
-.pk{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;min-width:0;border-inline-start:4px solid var(--c)}
+.pk{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;min-width:0;border-inline-start:4px solid var(--c);font:inherit;color:var(--fg);text-align:start;cursor:pointer}
 .pk span{font-size:.76rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pk b{font-family:var(--head);font-size:1.15rem;font-variant-numeric:tabular-nums}
 .pk b.neg{color:var(--fare)}
@@ -298,9 +298,15 @@ function loadState(raw){
   DEF_POCKETS.forEach(p=>{if(!s.pockets.some(x=>x.id===p.id))s.pockets.push({...p})});
   /* ترحيل: ملاحظة اليوم كانت جوه days، دلوقتي في notes علشان كتابة ملاحظة ما تحسبش يومية */
   Object.values(s.days).forEach(d=>{if(d.note){if(!s.notes[d.date])s.notes[d.date]=d.note;delete d.note}});
+  if(!Array.isArray(s.cpays))s.cpays=[];
+  /* ترحيل: اليومية كانت بتدخل الجيب كل يوم، فلما حددت رصيدك اتخصم منه يومية النهارده. دلوقتي اليومية بتدخل الجيب بس لما تقبض آخر الأسبوع */
+  if(!s.migWeekly){
+    if(s.wallet){const n=new Date(),t=n.getFullYear()+"-"+String(n.getMonth()+1).padStart(2,"0")+"-"+String(n.getDate()).padStart(2,"0");s.wallet.base+=Object.values(s.days).filter(d=>d.date>=s.wallet.since&&d.date<=t&&d.worked!==false).reduce((a,d)=>a+(+d.wage||0),0)}
+    s.migWeekly=1;
+  }
   return s;
 }
-try{S=loadState(JSON.parse(localStorage.getItem(KEY)||"{}"))}catch(e){S=loadState({})}
+try{S=loadState(JSON.parse(localStorage.getItem(KEY)||"{}"))}catch(e){try{const r=localStorage.getItem(KEY);if(r&&!localStorage.getItem(KEY+":rescue"))localStorage.setItem(KEY+":rescue",r)}catch(_){}S=loadState({})}
 var syncReady=false;
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toast("المساحة مليانة، الحفظ ما نجحش")}if(syncReady)scheduleSync()}
 if(navigator.storage&&navigator.storage.persist){navigator.storage.persist().catch(()=>{})}
@@ -336,6 +342,9 @@ const fareOwed=d=>Math.max(0,fareSum(d)-fareCap());
 const refundOf=d=>+(d?.refund?.amount)||0;
 const refundDue=d=>Math.max(0,fareOwed(d)-refundOf(d));
 const pendingRefunds=()=>Object.values(S.days).filter(d=>refundDue(d)>0).sort((a,b)=>a.date.localeCompare(b.date));
+/* يومية السناتر بتتحسب كل يوم، بس الفلوس بتيجي مرة واحدة بعد الأسبوع ما يخلص */
+const cpayOf=d=>d&&d.paidBy?S.cpays.find(p=>p.id===d.paidBy):null;
+const unpaidDays=()=>Object.values(S.days).filter(d=>wageOf(d)>0&&!cpayOf(d)&&d.date<=today()).sort((a,b)=>a.date.localeCompare(b.date));
 function markRefund(date){const d=S.days[date];if(!d)return 0;const due=refundDue(d);if(due>0)d.refund={amount:refundOf(d)+due,date:today()};return due}
 let toastT;function toast(m){const t=$("#toast");t.textContent=m;t.hidden=false;clearTimeout(toastT);toastT=setTimeout(()=>t.hidden=true,2400)}
 const ICON={
@@ -357,7 +366,7 @@ const OUT_CATS=[
   ["health","صحة وصيدلية","#2E9E5B"],["home","البيت","#9A7B4F"],["gifts","هدايا","#E0524A"],["other","تانية","#7A8794"]
 ];
 const IN_CATS=[["extra","شغل إضافي","#0F7B57"],["gift","هدية / عيدية","#2E9E5B"],["back","حد رجّعلي فلوس","#0E9AA0"],["other_in","تانية","#7A8794"]];
-const AUTO_CATS={centers:["السناتر","#0F7B57"],cfare:["مواصلات السناتر","#E4572E"],refund:["مواصلات من صاحب الشغل","#0E9AA0"],cafe:["مرتب الكافتيريا","#16A34A"],adj:["فرق مش معروف","#9A6700"],move:["تحويل بين الجيوب","#7A8794"],tab:["أجل الكافتيريا","#5B5BD6"]};
+const AUTO_CATS={centers:["السناتر","#0F7B57"],cfare:["مواصلات السناتر","#E4572E"],refund:["مواصلات من صاحب الشغل","#0E9AA0"],cafe:["مرتب الكافتيريا","#16A34A"],adj:["فرق مش معروف","#9A6700"],cpay:["قبض السناتر","#0F7B57"],open:["ظبط رصيد","#2F7DD1"],move:["تحويل بين الجيوب","#7A8794"],tab:["أجل الكافتيريا","#5B5BD6"]};
 function catInfo(id){
   const f=OUT_CATS.find(c=>c[0]===id)||IN_CATS.find(c=>c[0]===id);
   if(f)return{name:f[1],color:f[2]};
@@ -372,19 +381,22 @@ function events(a,b){
   for(const d of Object.values(S.days)){
     if(d.date<a||d.date>b)continue;
     const w=wageOf(d);
-    if(w>0)out.push({date:d.date,k:"in",cash:w,amount:w,cat:"centers",label:"يومية السناتر",src:"wage",pocket:"centers"});
+    if(w>0)out.push({date:d.date,k:"in",cash:0,amount:w,cat:"centers",label:"يومية السناتر",src:"wage",paid:!!cpayOf(d)});
     for(const t of d.transport||[])out.push({date:d.date,k:"out",cash:-(+t.amount||0),amount:+t.amount||0,cat:"cfare",label:t.note||"مواصلات السناتر",src:"fare",ref:t.id,ts:t.ts,pocket:t.pocket||"centers"});
   }
   for(const d of Object.values(S.days)){
     if(!d.refund||!refundOf(d))continue;const rd=d.refund.date||d.date;if(rd<a||rd>b)continue;
-    out.push({date:rd,k:"in",cash:refundOf(d),amount:refundOf(d),cat:"refund",label:"صاحب الشغل رجّعلي مواصلات "+shortDate(d.date),src:"refund",ref:d.date,pocket:"centers"});
+    const vp=d.refund.viaPay&&S.cpays.some(p=>p.id===d.refund.viaPay);
+    out.push({date:rd,k:"in",cash:vp?0:refundOf(d),amount:refundOf(d),cat:"refund",label:"صاحب الشغل رجّعلي مواصلات "+shortDate(d.date),src:"refund",ref:d.date,pocket:vp?undefined:"centers",viaPay:vp});
   }
+  for(const p of S.cpays){if(p.date<a||p.date>b)continue;out.push({date:p.date,k:"pay",cash:p.old?0:+p.amount||0,amount:+p.amount||0,cat:"cpay",label:"قبض السناتر · "+p.days.length+" يوم"+(p.old?" (قبل ما أسجل جيبي)":""),src:"cpay",ref:p.id,ts:p.ts,pocket:p.old?undefined:"centers"})}
   for(const t of S.tx){
     if(t.date<a||t.date>b)continue;
     const amt=+t.amount||0;
     const pk=t.pocket||"other";
     if(t.type==="in")out.push({date:t.date,k:"in",cash:amt,amount:amt,cat:t.cat,label:t.note||catInfo(t.cat).name,src:"tx",ref:t.id,ts:t.ts,pocket:pk});
     else if(t.type==="adj")out.push({date:t.date,k:"adj",cash:amt,amount:amt,cat:"adj",label:amt<0?"فلوس ناقصة مش عارف راحت فين":"فلوس زيادة مش متسجلة",src:"tx",ref:t.id,ts:t.ts,pocket:pk});
+    else if(t.type==="open")out.push({date:t.date,k:"open",cash:amt,amount:amt,cat:"open",label:"ظبطت رصيد "+pocketOf(pk).name,src:"tx",ref:t.id,ts:t.ts,pocket:pk});
     else if(t.type==="move")out.push({date:t.date,k:"move",cash:0,amount:amt,cat:"move",label:"حوّلت من "+pocketOf(t.from).name+" لـ "+pocketOf(t.to).name,src:"tx",ref:t.id,ts:t.ts,from:t.from,to:t.to});
     else out.push({date:t.date,k:"out",cash:-amt,amount:amt,cat:t.cat,label:t.note||catInfo(t.cat).name,src:"tx",ref:t.id,ts:t.ts,pocket:pk});
   }
@@ -657,10 +669,10 @@ function nowMinutes(){const n=new Date();return n.getHours()*60+n.getMinutes()}
 const mins=hm=>{if(!hm)return-1;const[h,m]=hm.split(":").map(Number);return h*60+m};
 function ledgerRow(e,showDate){
   const ci=catInfo(e.cat);
-  const sign=e.k==="in"?"+":e.k==="out"?"−":e.k==="adj"?(e.amount<0?"−":"+"):"";
-  const amt=e.k==="adj"?Math.abs(e.amount):e.amount;
-  const where=e.pocket?(e.k==="in"?" · دخلت ":" · من ")+pocketOf(e.pocket).name:"";
-  const sub=(showDate?shortDate(e.date)+" · ":"")+(e.k==="tab"?"أجل · بيتخصم من المرتب":e.k==="move"?"تحويل":ci.name+where);
+  const sign=e.k==="in"||e.k==="pay"?"+":e.k==="out"?"−":e.k==="adj"||e.k==="open"?(e.amount<0?"−":"+"):"";
+  const amt=e.k==="adj"||e.k==="open"?Math.abs(e.amount):e.amount;
+  const where=e.k==="open"?"":e.pocket?(e.k==="in"||e.k==="pay"?" · دخلت ":" · من ")+pocketOf(e.pocket).name:"";
+  const sub=(showDate?shortDate(e.date)+" · ":"")+(e.k==="tab"?"أجل · بيتخصم من المرتب":e.k==="move"?"تحويل":e.k==="open"?"رقم حطيته بإيدك":e.src==="wage"?(e.paid?"✓ اتقبضت":"لسه ما اتقبضتش · بتتقبض آخر الأسبوع"):e.viaPay?"اتقبضت مع اليوميات":ci.name+where);
   return`<div class="lrow ${e.src==="fare"?"del":""}" role="button" tabindex="0" data-src="${e.src}" data-ref="${esc(e.ref||"")}" data-date="${e.date}">
     <i class="dot" style="background:${ci.color}"></i>
     <span class="tx"><b>${esc(e.label)}</b><span>${esc(sub)}</span></span>
@@ -674,6 +686,7 @@ function bindLedger(root){
       if(src==="tx")txSheet(null,ref);
       else if(src==="tab")txSheet("tab",ref);
       else if(src==="refund"){cur=ref;go("today")}
+      else if(src==="cpay")cpaySheet(ref);
       else if(src==="pay"){const p=S.cafe.pays.find(x=>x.id===ref);if(p){cafeMonth=p.month;go("cafe")}}
       else if(src==="wage"){cur=el.dataset.date;if(view!=="today")go("today");setTimeout(()=>{const w=$("#wageCard");w&&w.scrollIntoView({behavior:"smooth",block:"center"})},50)}
     };
@@ -693,6 +706,9 @@ function renderToday(){
   /* فلوس مواصلات عند صاحب الشغل من أيام قبل كده */
   if(isT){const pr=pendingRefunds().filter(x=>x.date!==cur);if(pr.length){const tot=pr.reduce((s,x)=>s+refundDue(x),0);
     h+=`<div class="due" style="background:var(--fare-soft)"><p>صاحب الشغل عليه <b style="color:var(--fare)">${fmt(tot)} ج.م</b> مواصلات من ${pr.length===1?"يوم "+shortDate(pr[0].date):pr.length+" أيام"}</p><button class="btn ink sm" id="goRefunds">شوف</button></div>`}}
+  /* يوميات السناتر من أسابيع خلصت ولسه ما اتقبضتش */
+  if(isT){const ws=weekStart(today()),up=unpaidDays().filter(x=>x.date<ws);if(up.length){const tot=up.reduce((s,x)=>s+wageOf(x),0);
+    h+=`<div class="due" style="background:color-mix(in srgb,var(--money) 12%,var(--card))"><p>السناتر عليهم <b style="color:var(--money)">${fmt(tot)} ج.م</b> يوميات ${up.length} يوم من أسبوع خلص. قبضتهم؟</p><button class="btn ink sm" id="goCpay">قبضت</button></div>`}}
   /* أزرار سريعة */
   h+=`<div class="quick">
     <button class="q-out" data-q="out"><span class="ico">${ICON.out}</span>صرفت</button>
@@ -702,9 +718,10 @@ function renderToday(){
   /* فلوسك فين */
   {const bal=pocketBalances();
    h+=`<div class="sec-h"><h2>فلوسك فين</h2><div class="links"><button class="link" id="goMove">حوّل</button></div></div>
-   <div class="pockets">${S.pockets.map(p=>`<div class="pk" style="--c:${p.color}"><span>${esc(p.name)}</span><b class="${(bal[p.id]||0)<0?"neg":""}">${fmt(bal[p.id]||0)}</b></div>`).join("")}</div>
+   <div class="pockets">${S.pockets.map(p=>`<button type="button" class="pk" data-pkset="${p.id}" style="--c:${p.color}"><span>${esc(p.name)}</span><b class="${(bal[p.id]||0)<0?"neg":""}">${fmt(bal[p.id]||0)}</b></button>`).join("")}</div>
+   <p class="hint" style="margin:0">دوس على أي جيب واكتب فيه الرقم اللي معاك، حتى لو تقريبي.</p>
    ${S.pockets.some(p=>(bal[p.id]||0)<0)?`<p class="hint" style="margin:0">الرقم الأحمر معناه إنك صرفت من الجيب ده أكتر من اللي دخله، يعني استلفت من جيب تاني. استعمل «حوّل» علشان توضح.</p>`:""}
-   ${S.wallet?"":`<p class="hint" style="margin:0">الأرقام دي من اللي سجلته بس. دوس «في جيبك كام؟» فوق علشان تبدأ من الرقم الحقيقي.</p>`}`;}
+   `;}
   /* حركة الفلوس */
   const ev=events(cur,cur).sort((a,b)=>(a.ts||0)-(b.ts||0));
   h+=`<div class="sec-h"><h2>حركة الفلوس</h2>${ev.length?`<span class="muted small">${ev.length} حركة</span>`:""}</div>
@@ -751,7 +768,7 @@ function renderToday(){
     </div>`;
   }
   if(d)h+=`<div class="card stack" id="wageCard">
-    <div class="daytoggle"><div><b>يومية السناتر</b><div class="muted small">${d.worked===false?"اليوم ده مش هيتحسب فيه يومية":"هتتحسب "+fmt(d.wage)+" ج.م دخل"}</div></div>
+    <div class="daytoggle"><div><b>يومية السناتر</b><div class="muted small">${d.worked===false?"اليوم ده مش هيتحسب فيه يومية":cpayOf(d)?"✓ اتقبضت يوم "+shortDate(cpayOf(d).date):fmt(d.wage)+" ج.م ليك، بتتقبض مرة واحدة آخر الأسبوع"}</div></div>
     <label class="switch"><input type="checkbox" id="worked" ${d.worked!==false?"checked":""} aria-label="اليومية محسوبة"><span></span></label></div>
     <div class="field">قيمة اليومية لليوم ده<input type="number" inputmode="decimal" id="wage" class="num" value="${d.wage}"></div></div>`;
   else if(S.centers.length)h+=`<button class="link" id="wageOnly" style="align-self:flex-start">اشتغلت في السناتر من غير ميعاد متسجل؟ سجّل اليومية</button>`;
@@ -764,6 +781,8 @@ function renderToday(){
   $$("[data-q]").forEach(b=>b.onclick=()=>b.dataset.q==="fare"?fareSheet(S.centers.length&&(getDay(cur)?.items||[]).length?"center":"other"):txSheet(b.dataset.q));
   $("#goRefunds")&&($("#goRefunds").onclick=()=>go("centers"));
   $("#goMove").onclick=()=>moveSheet();
+  $("#goCpay")&&($("#goCpay").onclick=()=>cpaySheet());
+  $$("[data-pkset]").forEach(b=>b.onclick=()=>pocketSheet(b.dataset.pkset));
   $("#refundDay")&&($("#refundDay").onclick=()=>{const v=markRefund(cur);save();render();toast("اتسجل "+fmt(v)+" ج.م من صاحب الشغل")});
   $("#refundUndo")&&($("#refundUndo").onclick=()=>{delete getDay(cur).refund;save();render();toast("اتلغى تسجيل الاستلام")});
   bindLedger($("#main"));
@@ -801,6 +820,7 @@ function txSheet(type,id){
   if(id){rec=type==="tab"?S.cafe.tabs.find(t=>t.id===id):S.tx.find(t=>t.id===id);if(!rec)return;if(type!=="tab")type=rec.type}
   if(type==="adj"){walletSheet();return}
   if(type==="move"){moveSheet(id);return}
+  if(type==="open"){pocketSheet(rec.pocket);return}
   type=type||"out";
   let cat=rec?.cat||(type==="in"?"extra":"food");
   let pk=rec?.pocket||(type==="in"?"other":(S.lastPocket||"other"));
@@ -879,16 +899,74 @@ function moveSheet(id){
 
 /* --- جيب جديد / تعديل جيب --- */
 function pocketSheet(id){
-  const p=id?S.pockets.find(x=>x.id===id):null;
-  openSheet(`<h3>${p?"تعديل "+esc(p.name):"جيب فلوس جديد"}</h3><div class="stack">
-    <label class="field">الاسم<input id="pkName" value="${esc(p?.name||"")}" placeholder="مثلاً: تحويشة، فودافون كاش، فلوس الجمعية" data-autofocus></label>
+  const p=id?S.pockets.find(x=>x.id===id):null;const now=p?(pocketBalances()[p.id]||0):0;
+  openSheet(`<h3>${p?esc(p.name):"جيب فلوس جديد"}</h3><div class="stack">
+    <label class="field">فيه كام دلوقتي (ج.م)<input type="number" inputmode="decimal" id="pkBal" class="num bigamt" value="${p?now:""}" placeholder="0" ${p?"data-autofocus":""}></label>
+    <p class="hint" style="margin:0">مش عارف بالظبط؟ اكتب رقم تقريبي واصرف منه عادي. لما تعرف الرقم الحقيقي (زي باقي المرتب) ارجع هنا وعدّله.</p>
+    <label class="field">الاسم<input id="pkName" value="${esc(p?.name||"")}" placeholder="مثلاً: تحويشة، فودافون كاش، فلوس الجمعية" ${p?"":"data-autofocus"}></label>
     ${p&&!p.fixed?delConfirm("pkConfirm","هتمسح الجيب ده؟ الحركات القديمة هتفضل متسجلة."):""}
   </div><div class="foot"><button class="btn sun" id="pkSave" type="button">احفظ</button>${p&&!p.fixed?`<button class="btn danger" id="pkDel" type="button">امسح</button>`:`<button class="btn ghost" id="pkCancel" type="button">إلغاء</button>`}</div>`,()=>{
     $("#pkCancel")&&($("#pkCancel").onclick=closeSheet);
     bindDel("#pkDel","#pkConfirm",()=>{S.pockets=S.pockets.filter(x=>x.id!==id);if(S.lastPocket===id)S.lastPocket="other";save();closeSheet();render();toast("اتمسح الجيب")});
     $("#pkSave").onclick=()=>{const name=$("#pkName").value.trim();if(!name){toast("اكتب الاسم");return}
-      if(p)p.name=name;else S.pockets.push({id:"p"+uid(),name,color:POCKET_COLORS[(S.pockets.length-3)%POCKET_COLORS.length]});
-      save();closeSheet();render();toast("اتحفظ "+name)};
+      let pid=p?.id;
+      if(p)p.name=name;else{pid="p"+uid();S.pockets.push({id:pid,name,color:POCKET_COLORS[(S.pockets.length-3)%POCKET_COLORS.length]})}
+      const raw=$("#pkBal").value;
+      if(raw!==""){
+        /* أول مرة: ابدأ الحساب من كل اللي اتسجل قبل كده علشان الأرقام ما تتلخبطش */
+        if(!S.wallet)S.wallet={since:"0000-01-01",base:0,at:Date.now(),pocket:"other"};
+        const df=Math.round((+raw-(pocketBalances()[pid]||0))*100)/100;
+        if(df!==0)S.tx.push({id:uid(),type:"open",amount:df,pocket:pid,cat:"open",note:"",date:today(),ts:Date.now()});
+      }
+      save();closeSheet();render();toast(raw!==""?name+": "+fmt(+raw)+" ج.م":"اتحفظ "+name)};
+  });
+}
+
+/* --- قبض السناتر (مرة في الأسبوع) --- */
+function cpaySheet(id){
+  if(id){
+    const p=S.cpays.find(x=>x.id===id);if(!p)return;
+    openSheet(`<h3>قبض السناتر · ${shortDate(p.date)}</h3><div class="stack">
+      <div class="big"><span class="lbl">${p.old?"اتقبض قبل ما تسجل جيبك (ما دخلش الجيب)":"دخل فلوس السناتر"}</span><span class="v">${fmt(p.amount)} <small>ج.م</small></span></div>
+      <div>${p.days.map(d=>`<div class="crow"><span>${shortDate(d)}</span><b>${fmt(wageOf(S.days[d]))}</b></div>`).join("")}</div>
+      ${p.refunds&&p.refunds.length?`<span class="muted small">ومعاهم مواصلات صاحب الشغل لـ ${p.refunds.length} يوم</span>`:""}
+      ${delConfirm("cpConfirm","هتمسح القبض ده؟ الأيام هترجع «لسه ما اتقبضتش».")}
+    </div><div class="foot"><button class="btn danger" id="cpDel" type="button">امسح</button><button class="btn ghost" id="cpClose" type="button">قفل</button></div>`,()=>{
+      $("#cpClose").onclick=closeSheet;
+      bindDel("#cpDel","#cpConfirm",()=>{
+        Object.values(S.days).forEach(d=>{if(d.paidBy===id)delete d.paidBy;if(d.refund&&d.refund.viaPay===id)delete d.refund});
+        S.cpays=S.cpays.filter(x=>x.id!==id);save();closeSheet();render();toast("اتمسح القبض");
+      });
+    });
+    return;
+  }
+  const up=unpaidDays();if(!up.length){toast("مفيش يوميات لسه ما اتقبضتش");return}
+  const ws=weekStart(today());
+  const sel=new Set(up.filter(d=>d.date<ws).map(d=>d.date));if(!sel.size)up.forEach(d=>sel.add(d.date));
+  let touched=false,withRef=true,old=false;
+  const refOf=d=>refundOf(d)?0:refundDue(d);
+  const calc=()=>{let w=0,r=0;up.forEach(d=>{if(sel.has(d.date)){w+=wageOf(d);r+=refOf(d)}});return{w,r}};
+  openSheet(`<h3>قبضت من السناتر</h3><div class="stack">
+    <p class="hint" style="margin:0">علّم الأيام اللي اتقبضت. الفلوس هتدخل «${esc(pocketOf("centers").name)}».</p>
+    <div class="chips" id="cpDays">${up.map(d=>`<button type="button" class="chip" data-d="${d.date}" aria-pressed="${sel.has(d.date)}">${shortDate(d.date)} <span class="num" style="opacity:.7">${fmt(wageOf(d))}</span></button>`).join("")}</div>
+    <label class="daytoggle" id="cpRefL"><span class="small">ومعاهم مواصلات صاحب الشغل الزيادة (<b id="cpRefV"></b> ج.م)</span><span class="switch"><input type="checkbox" id="cpRef" checked><span></span></span></label>
+    <label class="field">قبضت كام (ج.م)<input type="number" inputmode="decimal" id="cpAmt" class="num bigamt"></label>
+    ${S.wallet&&S.wallet.since!=="0000-01-01"?`<label class="daytoggle"><span class="small">القبض ده كان قبل ما أحدد اللي في جيبي (ما يدخلش الجيب)</span><span class="switch"><input type="checkbox" id="cpOld"><span></span></span></label>`:""}
+  </div><div class="foot"><button class="btn sun" id="cpSave" type="button">سجّل</button><button class="btn ghost" id="cpCancel" type="button">إلغاء</button></div>`,()=>{
+    const paint=()=>{const{w,r}=calc();$("#cpRefV").textContent=fmt(r);$("#cpRefL").hidden=!r;if(!touched)$("#cpAmt").value=w+(withRef?r:0)};
+    paint();
+    $$("#cpDays .chip").forEach(b=>b.onclick=()=>{const d=b.dataset.d;sel.has(d)?sel.delete(d):sel.add(d);b.setAttribute("aria-pressed",sel.has(d));paint()});
+    $("#cpRef").onchange=e=>{withRef=e.target.checked;paint()};
+    $("#cpAmt").oninput=()=>touched=true;
+    $("#cpOld")&&($("#cpOld").onchange=e=>old=e.target.checked);
+    $("#cpCancel").onclick=closeSheet;
+    $("#cpSave").onclick=()=>{
+      if(!sel.size){toast("علّم يوم واحد على الأقل");return}
+      const amount=+$("#cpAmt").value;if(!(amount>0)){toast("اكتب المبلغ");return}
+      const p={id:uid(),date:today(),ts:Date.now(),amount,days:[...sel].sort(),refunds:[],old};
+      p.days.forEach(ds=>{const d=S.days[ds];d.paidBy=p.id;if(withRef&&refOf(d)>0){d.refund={amount:refundDue(d),date:today(),viaPay:p.id};p.refunds.push(ds)}});
+      S.cpays.push(p);save();closeSheet();render();toast("قبضت "+fmt(amount)+" ج.م من السناتر");
+    };
   });
 }
 
@@ -966,7 +1044,7 @@ function fareSheet(kind){
     const live=()=>{
       $("#fKindHint").textContent=kind==="center"?"رايح أو جاي من سنتر. بتتحسب على حد الـ "+fmt(fareCap())+" ج.م في اليوم.":"شغل الكافتيريا، خروجة، أي مشوار تاني. بتتحسب في الصرف العادي.";
       $("#fNote").placeholder=kind==="center"?"مثلاً: ميكروباص لسنتر النور":"مثلاً: رايح الكافتيريا";
-      if(!pkTouched){pk=kind==="center"?"centers":(S.lastPocket||"other");$("#fPkBox").innerHTML=pocketChips(pk,bal,"fPk");bindPocketChips("fPk",v=>{pk=v;pkTouched=true})}
+      if(!pkTouched){pk=S.lastPocket||"other";$("#fPkBox").innerHTML=pocketChips(pk,bal,"fPk");bindPocketChips("fPk",v=>{pk=v;pkTouched=true})}
       const box=$("#fCap");if(kind!=="center"){box.innerHTML="";return}
       const before=fareSum(getDay(cur)),a=+$("#fAmt").value||0,after=before+a,cap=fareCap();
       box.innerHTML=after>cap?`<span style="color:var(--fare);font-weight:600">مواصلات السناتر اليوم هتبقى ${fmt(after)} ج.م · صاحب الشغل عليه ${fmt(after-cap)} ج.م</span>`
@@ -1096,6 +1174,13 @@ function renderCenters(){
       <div class="big"><span class="lbl">صاحب الشغل عليه (اللي فوق ${fmt(fareCap())} ج.م في اليوم)</span><span class="v neg">${fmt(tot)} <small>ج.م</small></span></div>
       <div>${pr.map(x=>`<div class="crow"><span>${shortDate(x.date)} <span class="muted small">· صرفت ${fmt(fareSum(x))}</span></span><span style="display:flex;gap:8px;align-items:center"><b style="color:var(--fare)">${fmt(refundDue(x))}</b><button class="btn ghost sm" data-refund="${x.date}">استلمت</button></span></div>`).join("")}</div>
       ${pr.length>1?`<button class="btn ink" id="refundAll">استلمت الكل (${fmt(tot)} ج.م)</button>`:""}</div>`}
+  {const up=unpaidDays();const tot=up.reduce((s,x)=>s+wageOf(x),0);
+   h+=`<div class="sec-h"><h2>اليوميات</h2></div><div class="card stack">
+     <div class="big"><span class="lbl">السناتر عليهم (لسه ما قبضتش)</span><span class="v">${fmt(tot)} <small>ج.م</small></span></div>
+     <span class="muted small">${up.length?up.length+" يوم · من "+shortDate(up[0].date)+(up.length>1?" لـ "+shortDate(up[up.length-1].date):""):"مفيش يوميات متأخرة"} · اليومية بتتقبض مرة واحدة بعد الأسبوع ما يخلص</span>
+     ${up.length?`<button class="btn ink" id="cpayNew">قبضت</button>`:""}
+     ${S.cpays.length?`<div>${S.cpays.slice().sort((a,b)=>b.date.localeCompare(a.date)).slice(0,6).map(p=>`<div class="crow" role="button" tabindex="0" data-cpay="${p.id}" style="cursor:pointer"><span>${shortDate(p.date)} <span class="muted small">· ${p.days.length} يوم${p.old?" · قبل جيبي":""}</span></span><b style="color:var(--money)">${fmt(p.amount)}</b></div>`).join("")}</div>`:""}
+   </div>`;}
   h+=`<div class="sec-h"><h2>أماكن الشغل</h2><button class="link" id="addC">+ سنتر جديد</button></div>`;
   if(!S.centers.length){h+=`<div class="card empty"><b>لسه مفيش سناتر</b><span>ضيف كل سنتر بتروحه ومعاه لينك الخريطة ورقم التليفون، علشان توصله وتكلمه بدوسة.</span><button class="btn sun" id="addC2">+ ضيف أول سنتر</button></div>`}
   else h+=S.centers.map(c=>{
@@ -1111,7 +1196,9 @@ function renderCenters(){
         <button class="pill" data-edit="${c.id}" style="margin-inline-start:auto">تعديل</button>
       </div></div>`}).join("");
   $("#main").innerHTML=h;
-  $("#addC").onclick=()=>centerSheet();$("#addC2")&&($("#addC2").onclick=()=>centerSheet());
+  $("#addC").onclick=()=>centerSheet();
+  $("#cpayNew")&&($("#cpayNew").onclick=()=>cpaySheet());
+  $$("[data-cpay]").forEach(r=>r.onclick=()=>cpaySheet(r.dataset.cpay));$("#addC2")&&($("#addC2").onclick=()=>centerSheet());
   $$("[data-refund]").forEach(b=>b.onclick=()=>{const v=markRefund(b.dataset.refund);save();render();toast("اتسجل "+fmt(v)+" ج.م من صاحب الشغل")});
   $("#refundAll")&&($("#refundAll").onclick=()=>{let t=0;pendingRefunds().forEach(x=>t+=markRefund(x.date));save();render();toast("اتسجل "+fmt(t)+" ج.م من صاحب الشغل")});
   $$("[data-edit]").forEach(b=>b.onclick=()=>centerSheet(b.dataset.edit));
@@ -1154,8 +1241,8 @@ function renderMoney(){
    for(const e of ev){
      if(e.k==="move"){(per[e.from]||(per[e.from]={inc:0,out:0,cats:{}})).out+=e.amount;(per[e.to]||(per[e.to]={inc:0,out:0,cats:{}})).inc+=e.amount;per[e.from].cats.move=(per[e.from].cats.move||0)+e.amount;continue}
      if(!e.pocket)continue;const r=per[e.pocket]||(per[e.pocket]={inc:0,out:0,cats:{}});
-     if(e.k==="in"||(e.k==="adj"&&e.amount>0))r.inc+=Math.abs(e.amount);
-     else if(e.k==="out"||(e.k==="adj"&&e.amount<0)){r.out+=Math.abs(e.amount);r.cats[e.cat]=(r.cats[e.cat]||0)+Math.abs(e.amount)}
+     if(e.k==="in"||e.k==="pay"||((e.k==="adj"||e.k==="open")&&e.amount>0))r.inc+=Math.abs(e.amount);
+     else if(e.k==="out"||((e.k==="adj"||e.k==="open")&&e.amount<0)){r.out+=Math.abs(e.amount);r.cats[e.cat]=(r.cats[e.cat]||0)+Math.abs(e.amount)}
    }
    const rows=Object.entries(per).filter(([,r])=>r.inc||r.out);
    if(rows.length)h+=`<div class="sec-h"><h2>صرفت من أنهو فلوس</h2></div><div class="card">${rows.map(([id,r])=>{const p=pocketOf(id);const top=Object.entries(r.cats).sort((x,y)=>y[1]-x[1]).slice(0,3).map(([c,v])=>catInfo(c).name+" "+fmt(v)).join(" · ");
@@ -1186,6 +1273,7 @@ function renderMoney(){
     if(ds.length){const counts={};ds.forEach(d=>d.items.forEach(i=>{if(i.status!=="off")counts[i.centerId]=(counts[i.centerId]||0)+1}));
       const w=ds.reduce((s,d)=>s+wageOf(d),0),n=ds.filter(d=>d.worked!==false).length;
       h+=`<div class="sec-h"><h2>السناتر</h2></div><div class="card"><div class="crow"><span>أيام شغل</span><b>${n}</b></div><div class="crow"><span>اليوميات (كاملة)</span><b style="color:var(--money)">${fmt(w)}</b></div>
+      ${(()=>{const un=ds.filter(d=>!cpayOf(d)).reduce((s,d)=>s+wageOf(d),0);return`<div class="crow"><span class="muted">اتقبض منها</span><b>${fmt(w-un)}</b></div>${un?`<div class="crow"><span class="muted">لسه ليك</span><b style="color:var(--fare)">${fmt(un)}</b></div>`:""}`})()}
       <span class="muted small">المواصلات مش مخصومة من هنا، هتلاقيها في قسم «المواصلات».</span>
       ${Object.entries(counts).sort((p,q)=>q[1]-p[1]).map(([id,c])=>`<div class="crow"><span class="muted">${esc(center(id)?.name||"سنتر اتمسح")}</span><span class="muted">${c} زيارة</span></div>`).join("")}</div>`}
   }
