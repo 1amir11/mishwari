@@ -91,7 +91,7 @@ main{padding:16px max(16px,env(safe-area-inset-right,0px)) calc(160px + env(safe
 .lrow .tx b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lrow .tx span{font-size:.76rem;color:var(--muted)}
 .lrow .amt{font-family:var(--head);font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
-.amt.in{color:var(--money)} .amt.out{color:var(--fare)} .amt.tab{color:var(--tab)} .amt.adj{color:var(--warn)} .amt.move{color:var(--muted)} .amt.pay{color:var(--money)} .amt.open{color:var(--muted)}
+.amt.in{color:var(--money)} .amt.out{color:var(--fare)} .amt.tab{color:var(--tab)} .amt.adj{color:var(--warn)} .amt.move{color:var(--muted)} .amt.pay{color:var(--money)} .amt.open{color:var(--muted)} .amt.settle{color:var(--tab)}
 .pockets{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
 .pk{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;min-width:0;border-inline-start:4px solid var(--c);font:inherit;color:var(--fg);text-align:start;cursor:pointer}
 .pk span{font-size:.76rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -290,7 +290,7 @@ const POCKET_COLORS=["#8B5CF6","#D0457F","#0E9AA0","#E0524A","#9A7B4F","#64748A"
 let S;
 function loadState(raw){
   const s=Object.assign({},DEF,raw||{});
-  s.cafe=Object.assign({shifts:{},tabs:[],pays:[]},s.cafe||{});
+  s.cafe=Object.assign({shifts:{},tabs:[],pays:[],repays:[]},s.cafe||{});if(!Array.isArray(s.cafe.repays))s.cafe.repays=[];
   ["tx","subs","centers"].forEach(k=>{if(!Array.isArray(s[k]))s[k]=[]});
   ["days","weekly","subSkip","notes"].forEach(k=>{if(!s[k]||typeof s[k]!=="object")s[k]={}});
   /* جيوب الفلوس: كل جنيه داخل بيروح لجيب، وكل صرف بيطلع من جيب */
@@ -342,6 +342,12 @@ const fareOwed=d=>Math.max(0,fareSum(d)-fareCap());
 const refundOf=d=>+(d?.refund?.amount)||0;
 const refundDue=d=>Math.max(0,fareOwed(d)-refundOf(d));
 const pendingRefunds=()=>Object.values(S.days).filter(d=>refundDue(d)>0).sort((a,b)=>a.date.localeCompare(b.date));
+/* الأجل: اللي خدته في الشهر − اللي سددته كاش = اللي هيتخصم من المرتب */
+const tabsOf=ym=>S.cafe.tabs.filter(t=>t.date.startsWith(ym)).reduce((a,t)=>a+(+t.amount||0),0);
+const repaidOf=ym=>S.cafe.repays.filter(t=>t.date.startsWith(ym)).reduce((a,t)=>a+(+t.amount||0),0);
+const tabNet=ym=>Math.max(0,tabsOf(ym)-repaidOf(ym));
+/* المرتب بيتصرف منه الشهر اللي بعده، فبيتحسب دخل الشهر الجاي (حتى لو قبضته يوم 30) */
+const payBudgetDate=p=>{const n=addMonths(p.month,1)+"-01";return p.date>n?p.date:n};
 /* يومية السناتر بتتحسب كل يوم، بس الفلوس بتيجي مرة واحدة بعد الأسبوع ما يخلص */
 const cpayOf=d=>d&&d.paidBy?S.cpays.find(p=>p.id===d.paidBy):null;
 const unpaidDays=()=>Object.values(S.days).filter(d=>wageOf(d)>0&&!cpayOf(d)&&d.date<=today()).sort((a,b)=>a.date.localeCompare(b.date));
@@ -366,7 +372,7 @@ const OUT_CATS=[
   ["health","صحة وصيدلية","#2E9E5B"],["home","البيت","#9A7B4F"],["gifts","هدايا","#E0524A"],["other","تانية","#7A8794"]
 ];
 const IN_CATS=[["extra","شغل إضافي","#0F7B57"],["gift","هدية / عيدية","#2E9E5B"],["back","حد رجّعلي فلوس","#0E9AA0"],["other_in","تانية","#7A8794"]];
-const AUTO_CATS={centers:["السناتر","#0F7B57"],cfare:["مواصلات السناتر","#E4572E"],refund:["مواصلات من صاحب الشغل","#0E9AA0"],cafe:["مرتب الكافتيريا","#16A34A"],adj:["فرق مش معروف","#9A6700"],cpay:["قبض السناتر","#0F7B57"],open:["ظبط رصيد","#2F7DD1"],move:["تحويل بين الجيوب","#7A8794"],tab:["أجل الكافتيريا","#5B5BD6"]};
+const AUTO_CATS={centers:["السناتر","#0F7B57"],cfare:["مواصلات السناتر","#E4572E"],refund:["مواصلات من صاحب الشغل","#0E9AA0"],cafe:["مرتب الكافتيريا","#16A34A"],adj:["فرق مش معروف","#9A6700"],cpay:["قبض السناتر","#0F7B57"],open:["ظبط رصيد","#2F7DD1"],settle:["سداد أجل","#5B5BD6"],move:["تحويل بين الجيوب","#7A8794"],tab:["أجل الكافتيريا","#5B5BD6"]};
 function catInfo(id){
   const f=OUT_CATS.find(c=>c[0]===id)||IN_CATS.find(c=>c[0]===id);
   if(f)return{name:f[1],color:f[2]};
@@ -376,7 +382,7 @@ function catInfo(id){
 
 /* ================= حركة الفلوس: كل مصدر في قايمة واحدة =================
    k: in (دخل كاش) · out (صرف كاش) · adj (فرق لما تعدّ فلوسك) · tab (أجل: مش كاش، بيتخصم من المرتب) */
-function events(a,b){
+function events(a,b,rep){
   const out=[];
   for(const d of Object.values(S.days)){
     if(d.date<a||d.date>b)continue;
@@ -400,7 +406,8 @@ function events(a,b){
     else if(t.type==="move")out.push({date:t.date,k:"move",cash:0,amount:amt,cat:"move",label:"حوّلت من "+pocketOf(t.from).name+" لـ "+pocketOf(t.to).name,src:"tx",ref:t.id,ts:t.ts,from:t.from,to:t.to});
     else out.push({date:t.date,k:"out",cash:-amt,amount:amt,cat:t.cat,label:t.note||catInfo(t.cat).name,src:"tx",ref:t.id,ts:t.ts,pocket:pk});
   }
-  for(const p of S.cafe.pays){if(p.date<a||p.date>b)continue;out.push({date:p.date,k:"in",cash:+p.received||0,amount:+p.received||0,cat:"cafe",label:"قبض الكافتيريا · "+monthName(p.month),src:"pay",ref:p.id,pocket:"cafe"})}
+  for(const t of S.cafe.repays){if(t.date<a||t.date>b)continue;out.push({date:t.date,k:"settle",cash:-(+t.amount||0),amount:+t.amount||0,cat:"settle",label:"سددت من الأجل",src:"repay",ref:t.id,ts:t.ts,pocket:t.pocket||"other"})}
+  for(const p of S.cafe.pays){const pd=rep?payBudgetDate(p):p.date;if(pd<a||pd>b)continue;out.push({date:pd,k:"in",cash:+p.received||0,amount:+p.received||0,cat:"cafe",label:"قبض الكافتيريا · "+monthName(p.month)+(rep&&pd!==p.date?" (قبضته "+shortDate(p.date)+")":""),src:"pay",ref:p.id,pocket:"cafe"})}
   for(const t of S.cafe.tabs){if(t.date<a||t.date>b)continue;out.push({date:t.date,k:"tab",cash:0,amount:+t.amount||0,cat:"tab",label:t.note||"أجل من الكافتيريا",src:"tab",ref:t.id,ts:t.ts})}
   return out;
 }
@@ -658,7 +665,7 @@ function renderTop(){
     $("#walletBtn").onclick=walletSheet;
   }else{
     const ym=today().slice(0,7);
-    const cafeTab=S.cafe.tabs.filter(t=>t.date.startsWith(ym)).reduce((a,t)=>a+(+t.amount||0),0);
+    const cafeTab=tabNet(ym);
     const t={cafe:["الكافتيريا",`أجل ${MONTHS[+ym.slice(5)-1]}: ${fmt(cafeTab)} ج.م`],centers:["السناتر",S.centers.length?`${S.centers.length} سنتر متسجل`:"ضيف أماكن شغلك"],money:["الحساب","دخلت كام وصرفت كام وفين"],settings:["الإعدادات","جيبك، الاشتراكات، الإشعارات"]}[view];
     top.innerHTML=`<div class="brand"><b>مشواري</b><span>${S.wallet?"في جيبك "+fmt(walletBalance())+" ج.م":""}</span></div><h1>${t[0]}</h1><div class="sub">${t[1]}</div>`;
   }
@@ -669,10 +676,10 @@ function nowMinutes(){const n=new Date();return n.getHours()*60+n.getMinutes()}
 const mins=hm=>{if(!hm)return-1;const[h,m]=hm.split(":").map(Number);return h*60+m};
 function ledgerRow(e,showDate){
   const ci=catInfo(e.cat);
-  const sign=e.k==="in"||e.k==="pay"?"+":e.k==="out"?"−":e.k==="adj"||e.k==="open"?(e.amount<0?"−":"+"):"";
+  const sign=e.k==="in"||e.k==="pay"?"+":e.k==="out"||e.k==="settle"?"−":e.k==="adj"||e.k==="open"?(e.amount<0?"−":"+"):"";
   const amt=e.k==="adj"||e.k==="open"?Math.abs(e.amount):e.amount;
   const where=e.k==="open"?"":e.pocket?(e.k==="in"||e.k==="pay"?" · دخلت ":" · من ")+pocketOf(e.pocket).name:"";
-  const sub=(showDate?shortDate(e.date)+" · ":"")+(e.k==="tab"?"أجل · بيتخصم من المرتب":e.k==="move"?"تحويل":e.k==="open"?"رقم حطيته بإيدك":e.src==="wage"?(e.paid?"✓ اتقبضت":"لسه ما اتقبضتش · بتتقبض آخر الأسبوع"):e.viaPay?"اتقبضت مع اليوميات":ci.name+where);
+  const sub=(showDate?shortDate(e.date)+" · ":"")+(e.k==="tab"?"أجل · بيتخصم من المرتب":e.k==="move"?"تحويل":e.k==="open"?"رقم حطيته بإيدك":e.k==="settle"?"هيتخصم أقل من المرتب"+where:e.src==="wage"?(e.paid?"✓ اتقبضت":"لسه ما اتقبضتش · بتتقبض آخر الأسبوع"):e.viaPay?"اتقبضت مع اليوميات":ci.name+where);
   return`<div class="lrow ${e.src==="fare"?"del":""}" role="button" tabindex="0" data-src="${e.src}" data-ref="${esc(e.ref||"")}" data-date="${e.date}">
     <i class="dot" style="background:${ci.color}"></i>
     <span class="tx"><b>${esc(e.label)}</b><span>${esc(sub)}</span></span>
@@ -687,6 +694,7 @@ function bindLedger(root){
       else if(src==="tab")txSheet("tab",ref);
       else if(src==="refund"){cur=ref;go("today")}
       else if(src==="cpay")cpaySheet(ref);
+      else if(src==="repay")repaySheet(ref);
       else if(src==="pay"){const p=S.cafe.pays.find(x=>x.id===ref);if(p){cafeMonth=p.month;go("cafe")}}
       else if(src==="wage"){cur=el.dataset.date;if(view!=="today")go("today");setTimeout(()=>{const w=$("#wageCard");w&&w.scrollIntoView({behavior:"smooth",block:"center"})},50)}
     };
@@ -1088,17 +1096,16 @@ function centerSheet(id){
 function paySheet(month,id){
   const p=id?S.cafe.pays.find(x=>x.id===id):S.cafe.pays.find(x=>x.month===month);
   let m=p?.month||month;
-  const tabsOf=ym=>S.cafe.tabs.filter(t=>t.date.startsWith(ym)).reduce((a,t)=>a+(+t.amount||0),0);
   openSheet(`<h3>${p?"تعديل القبض":"قبضت كام؟"}</h3><div class="stack">
     <label class="field">مرتب شهر<input type="month" id="pMonth" value="${m}"></label>
     <label class="field">المبلغ اللي استلمته في إيدك (ج.م)<input type="number" inputmode="decimal" id="pAmt" class="num bigamt" value="${p?p.received:""}" placeholder="0" data-autofocus></label>
     <div class="eq" id="pEq"></div>
-    <p class="hint">التطبيق بيجمع اللي قبضته + الأجل اللي اتخصم، علشان تعرف مرتبك الحقيقي كان كام.</p>
+    <p class="hint">التطبيق بيجمع اللي قبضته + الأجل اللي اتخصم، علشان تعرف مرتبك الحقيقي كان كام. وفي «الحساب» القبض بيتحسب دخل الشهر اللي بعده، لأنك بتصرف منه فيه.</p>
     <label class="field">يوم القبض<input type="date" id="pDate" value="${p?.date||today()}"></label>
     <label class="field">ملاحظة<input id="pNote" value="${esc(p?.note||"")}" placeholder="مثلاً: اتخصم يوم غياب"></label>
     ${p?delConfirm("pConfirm","هتمسح القبض ده؟"):""}
   </div><div class="foot"><button class="btn sun" id="pSave" type="button">احفظ القبض</button>${p?`<button class="btn danger" id="pDel" type="button">امسح</button>`:`<button class="btn ghost" id="pCancel" type="button">إلغاء</button>`}</div>`,()=>{
-    const eq=()=>{m=$("#pMonth").value||m;const r=+$("#pAmt").value||0,t=tabsOf(m);
+    const eq=()=>{m=$("#pMonth").value||m;const r=+$("#pAmt").value||0,t=tabNet(m);
       $("#pEq").innerHTML=`<div><span>قبضت</span><b>${fmt(r)}</b></div><i>+</i><div><span>أجل اتخصم</span><b style="color:var(--tab)">${fmt(t)}</b></div><i>=</i><div><span>المرتب</span><b style="color:var(--money)">${fmt(r+t)}</b></div>`};
     eq();$("#pAmt").oninput=eq;$("#pMonth").onchange=eq;
     $("#pCancel")&&($("#pCancel").onclick=closeSheet);
@@ -1110,6 +1117,28 @@ function paySheet(month,id){
       if(ex)Object.assign(ex,data);else S.cafe.pays.push({id:uid(),...data});
       save();closeSheet();cafeMonth=m;render();toast("اتسجل قبض "+monthName(m));
     };
+  });
+}
+
+/* --- سددت جزء من الأجل كاش --- */
+function repaySheet(id){
+  const rec=id?S.cafe.repays.find(t=>t.id===id):null;
+  const ym=(rec?.date||today()).slice(0,7);
+  let pk=rec?.pocket||S.lastPocket||"other";const bal=pocketBalances();
+  openSheet(`<h3>${rec?"تعديل السداد":"سددت من الأجل"}</h3><div class="stack">
+    <p class="hint" style="margin:0">عليك أجل ${monthName(ym)} <b>${fmt(tabNet(ym)+(rec?+rec.amount:0))} ج.م</b>. اللي تسدده دلوقتي بيطلع من جيبك ومش هيتخصم من المرتب.</p>
+    <label class="field">سددت كام (ج.م)<input type="number" inputmode="decimal" id="rpAmt" class="num bigamt" value="${rec?rec.amount:""}" placeholder="0" data-autofocus></label>
+    <div class="field">دفعت من أنهو فلوس${pocketChips(pk,bal,"rpPk")}</div>
+    <label class="field">التاريخ<input type="date" id="rpDate" value="${rec?.date||today()}"></label>
+    ${rec?delConfirm("rpConfirm","هتمسح السداد ده؟"):""}
+  </div><div class="foot"><button class="btn sun" id="rpSave" type="button">${rec?"احفظ":"سجّل"}</button>${rec?`<button class="btn danger" id="rpDel" type="button">امسح</button>`:`<button class="btn ghost" id="rpCancel" type="button">إلغاء</button>`}</div>`,()=>{
+    bindPocketChips("rpPk",v=>pk=v);
+    $("#rpCancel")&&($("#rpCancel").onclick=closeSheet);
+    bindDel("#rpDel","#rpConfirm",()=>{S.cafe.repays=S.cafe.repays.filter(t=>t.id!==id);save();closeSheet();render();toast("اتمسح السداد")});
+    $("#rpSave").onclick=()=>{const amount=+$("#rpAmt").value;if(!(amount>0)){toast("اكتب المبلغ");return}
+      const date=$("#rpDate").value||today();
+      if(rec)Object.assign(rec,{amount,date,pocket:pk});else S.cafe.repays.push({id:uid(),amount,date,pocket:pk,ts:Date.now()});
+      S.lastPocket=pk;save();closeSheet();render();toast("سددت "+fmt(amount)+" ج.م من الأجل")};
   });
 }
 
@@ -1138,22 +1167,23 @@ function subSheet(id){
 function renderCafe(){
   const m=cafeMonth,a=m+"-01",b=lastDay(m);
   const tabs=S.cafe.tabs.filter(t=>t.date>=a&&t.date<=b).sort((x,y)=>y.date.localeCompare(x.date)||(y.ts||0)-(x.ts||0));
-  const tabSum=tabs.reduce((s,t)=>s+(+t.amount||0),0);
+  const tabTaken=tabs.reduce((s,t)=>s+(+t.amount||0),0),repaid=repaidOf(m),tabSum=tabNet(m);
+  const repays=S.cafe.repays.filter(t=>t.date>=a&&t.date<=b).sort((x,y)=>y.date.localeCompare(x.date));
   const shifts=Object.keys(S.cafe.shifts).filter(d=>d>=a&&d<=b).sort();
   const pay=S.cafe.pays.find(p=>p.month===m);
   let h=`<div class="card stack">
     <div class="mnav"><button class="iconbtn" id="cmPrev" aria-label="الشهر اللي فات">${ICON.prev}</button><h3>${monthName(m)}</h3><button class="iconbtn" id="cmNext" aria-label="الشهر الجاي">${ICON.next}</button></div>
-    <div class="split" style="border-top:0;margin-top:0;padding-top:0"><div><span>شيفتات</span><b>${shifts.length}</b></div><div><span>أجل هيتخصم</span><b style="color:var(--tab)">${fmt(tabSum)}</b></div><div class="g"><span>القبض</span><b>${pay?fmt(pay.received):"—"}</b></div></div>
-    ${pay?`<div class="eq"><div><span>قبضت</span><b>${fmt(pay.received)}</b></div><i>+</i><div><span>الأجل</span><b style="color:var(--tab)">${fmt(tabSum)}</b></div><i>=</i><div><span>المرتب الحقيقي</span><b style="color:var(--money)">${fmt(pay.received+tabSum)}</b></div></div>
+    <div class="split" style="border-top:0;margin-top:0;padding-top:0"><div><span>شيفتات</span><b>${shifts.length}</b></div><div><span>${pay?"أجل اتخصم":"أجل هيتخصم"}</span><b style="color:var(--tab)">${fmt(tabSum)}</b></div><div class="g"><span>القبض</span><b>${pay?fmt(pay.received):"—"}</b></div></div>
+    ${pay?`${repaid?`<span class="muted small">خدت أجل ${fmt(tabTaken)} وسددت منه ${fmt(repaid)} كاش، فاتخصم ${fmt(tabSum)} بس</span>`:""}<div class="eq"><div><span>قبضت</span><b>${fmt(pay.received)}</b></div><i>+</i><div><span>الأجل</span><b style="color:var(--tab)">${fmt(tabSum)}</b></div><i>=</i><div><span>المرتب الحقيقي</span><b style="color:var(--money)">${fmt(pay.received+tabSum)}</b></div></div>
       ${shifts.length?`<span class="muted small">يعني الشيفت طالع عليك بحوالي ${fmt(Math.round((pay.received+tabSum)/shifts.length))} ج.م</span>`:""}
       <button class="btn ghost" id="payEdit">تعديل القبض</button>`
-    :`<button class="btn sun" id="payAdd">قبضت مرتب ${MONTHS[+m.slice(5)-1]}؟ سجّله</button>`}
+    :`${repaid?`<span class="muted small">خدت أجل ${fmt(tabTaken)} وسددت منه ${fmt(repaid)} كاش</span>`:""}<button class="btn sun" id="payAdd">قبضت مرتب ${MONTHS[+m.slice(5)-1]}؟ سجّله</button>`}
   </div>
-  <div class="sec-h"><h2>الأجل</h2><button class="link" id="tabAdd" style="color:var(--tab)">+ أجل</button></div>
-  <div class="card">${tabs.length?`<div class="ledger">${tabs.map(t=>ledgerRow({date:t.date,k:"tab",amount:+t.amount,cat:"tab",label:t.note||"أجل من الكافتيريا",src:"tab",ref:t.id},true)).join("")}</div>`:`<div class="empty" style="padding:10px"><span>مفيش أجل متسجل في ${monthName(m)}. كل حاجة تاخدها على المرتب سجلها من زرار +.</span></div>`}</div>`;
+  <div class="sec-h"><h2>الأجل</h2><div class="links"><button class="link" id="repayAdd">سددت</button><button class="link" id="tabAdd" style="color:var(--tab)">+ أجل</button></div></div>
+  <div class="card">${tabs.length||repays.length?`<div class="ledger">${repays.map(t=>ledgerRow({date:t.date,k:"settle",amount:+t.amount,cat:"settle",label:"سددت من الأجل",src:"repay",ref:t.id,pocket:t.pocket||"other"},true)).join("")}${tabs.map(t=>ledgerRow({date:t.date,k:"tab",amount:+t.amount,cat:"tab",label:t.note||"أجل من الكافتيريا",src:"tab",ref:t.id},true)).join("")}</div>`:`<div class="empty" style="padding:10px"><span>مفيش أجل متسجل في ${monthName(m)}. كل حاجة تاخدها على المرتب سجلها من زرار +.</span></div>`}</div>`;
   if(shifts.length)h+=`<div class="sec-h"><h2>أيام الشغل</h2></div><div class="card"><div class="chips">${shifts.map(d=>`<span class="chip" style="cursor:default">${shortDate(d)}</span>`).join("")}</div></div>`;
   const hist=S.cafe.pays.slice().sort((x,y)=>y.month.localeCompare(x.month));
-  if(hist.length)h+=`<div class="sec-h"><h2>المرتبات اللي فاتت</h2></div><div class="card">${hist.map(p=>{const t=S.cafe.tabs.filter(x=>x.date.startsWith(p.month)).reduce((s,x)=>s+(+x.amount||0),0);
+  if(hist.length)h+=`<div class="sec-h"><h2>المرتبات اللي فاتت</h2></div><div class="card">${hist.map(p=>{const t=tabNet(p.month);
     return`<div class="crow"><span>${monthName(p.month)}</span><span class="muted small">قبض ${fmt(p.received)} + أجل ${fmt(t)}</span><b>${fmt(p.received+t)}</b></div>`}).join("")}</div>`;
   $("#main").innerHTML=h;
   $("#cmPrev").onclick=()=>{cafeMonth=addMonths(cafeMonth,-1);render()};
@@ -1161,6 +1191,7 @@ function renderCafe(){
   $("#payAdd")&&($("#payAdd").onclick=()=>paySheet(m));
   $("#payEdit")&&($("#payEdit").onclick=()=>paySheet(m,pay.id));
   $("#tabAdd").onclick=()=>txSheet("tab");
+  $("#repayAdd").onclick=()=>repaySheet();
   bindLedger($("#main"));
 }
 
@@ -1212,13 +1243,13 @@ function rangeOf(){
 }
 function renderMoney(){
   const[a,b,label]=rangeOf();
-  const ev=events(a,b),T=sums(ev);
+  const ev=events(a,b,true),T=sums(ev);
   let h=`<div class="periods" role="group" aria-label="الفترة">${[["day","يوم"],["week","أسبوع"],["month","شهر"]].map(([k,l])=>`<button data-p="${k}" aria-pressed="${period===k}">${l}</button>`).join("")}</div>
   <div class="card">
     <div class="mnav" style="margin-bottom:8px"><button class="iconbtn" id="rPrev" aria-label="اللي فات">${ICON.prev}</button><h3>${label}</h3><button class="iconbtn" id="rNext" aria-label="اللي جاي">${ICON.next}</button></div>
     <div class="big"><span class="lbl">${T.net>=0?"فاضل معاك من الفترة دي":"صرفت أكتر ما دخلت"}</span><span class="v ${T.net<0?"neg":""}">${fmt(T.net)} <small>ج.م</small></span></div>`;
   if(period!=="day"){
-    const bars=[];let x=a;while(x<=b){bars.push({d:x,v:sums(events(x,x)).spend});x=addDays(x,1)}
+    const bars=[];let x=a;while(x<=b){bars.push({d:x,v:sums(events(x,x,true)).spend});x=addDays(x,1)}
     const mx=Math.max(1,...bars.map(z=>z.v));
     h+=`<div class="bars" aria-hidden="true">${bars.map(z=>`<i class="${z.v<=0?"zero":""} ${z.d===today()?"today":""}" style="height:${Math.max(3,z.v/mx*100)}%"></i>`).join("")}</div><span class="muted small">صرفك يوم بيوم</span>`;
   }
@@ -1242,7 +1273,7 @@ function renderMoney(){
      if(e.k==="move"){(per[e.from]||(per[e.from]={inc:0,out:0,cats:{}})).out+=e.amount;(per[e.to]||(per[e.to]={inc:0,out:0,cats:{}})).inc+=e.amount;per[e.from].cats.move=(per[e.from].cats.move||0)+e.amount;continue}
      if(!e.pocket)continue;const r=per[e.pocket]||(per[e.pocket]={inc:0,out:0,cats:{}});
      if(e.k==="in"||e.k==="pay"||((e.k==="adj"||e.k==="open")&&e.amount>0))r.inc+=Math.abs(e.amount);
-     else if(e.k==="out"||((e.k==="adj"||e.k==="open")&&e.amount<0)){r.out+=Math.abs(e.amount);r.cats[e.cat]=(r.cats[e.cat]||0)+Math.abs(e.amount)}
+     else if(e.k==="out"||e.k==="settle"||((e.k==="adj"||e.k==="open")&&e.amount<0)){r.out+=Math.abs(e.amount);r.cats[e.cat]=(r.cats[e.cat]||0)+Math.abs(e.amount)}
    }
    const rows=Object.entries(per).filter(([,r])=>r.inc||r.out);
    if(rows.length)h+=`<div class="sec-h"><h2>صرفت من أنهو فلوس</h2></div><div class="card">${rows.map(([id,r])=>{const p=pocketOf(id);const top=Object.entries(r.cats).sort((x,y)=>y[1]-x[1]).slice(0,3).map(([c,v])=>catInfo(c).name+" "+fmt(v)).join(" · ");
@@ -1266,8 +1297,10 @@ function renderMoney(){
   if(period==="month"){
     const ym=anchor.slice(0,7),pay=S.cafe.pays.find(p=>p.month===ym),sh=Object.keys(S.cafe.shifts).filter(d=>d.startsWith(ym)).length;
     if(pay||sh||T.tab)h+=`<div class="sec-h"><h2>الكافتيريا</h2></div><div class="card">
-      <div class="crow"><span>شيفتات</span><b>${sh}</b></div><div class="crow"><span>أجل اتخصم</span><b style="color:var(--tab)">${fmt(T.tab)}</b></div>
-      <div class="crow"><span>القبض</span><b>${pay?fmt(pay.received):"لسه ما اتسجلش"}</b></div>${pay?`<div class="crow"><span>المرتب الحقيقي</span><b style="color:var(--money)">${fmt(pay.received+T.tab)}</b></div>`:""}</div>`;
+      <div class="crow"><span>شيفتات</span><b>${sh}</b></div><div class="crow"><span>أجل خدته</span><b style="color:var(--tab)">${fmt(tabsOf(ym))}</b></div>
+      ${repaidOf(ym)?`<div class="crow"><span class="muted">سددت منه كاش</span><b>${fmt(repaidOf(ym))}</b></div>`:""}
+      <div class="crow"><span>${pay?"اتخصم من المرتب":"هيتخصم من المرتب"}</span><b style="color:var(--tab)">${fmt(tabNet(ym))}</b></div>
+      <div class="crow"><span>قبض مرتب ${MONTHS[+ym.slice(5)-1]}</span><b>${pay?fmt(pay.received):"لسه ما اتسجلش"}</b></div>${pay?`<div class="crow"><span>المرتب الحقيقي</span><b style="color:var(--money)">${fmt(pay.received+tabNet(ym))}</b></div><span class="muted small">القبض ده محسوب دخل ${monthName(addMonths(ym,1))} في الحساب، لأنك بتصرف منه فيه.</span>`:""}</div>`;
     /* السناتر */
     const ds=Object.values(S.days).filter(d=>d.date.startsWith(ym));
     if(ds.length){const counts={};ds.forEach(d=>d.items.forEach(i=>{if(i.status!=="off")counts[i.centerId]=(counts[i.centerId]||0)+1}));

@@ -1,5 +1,5 @@
 // مشواري service worker: keeps the app working with no internet + receives Web Push.
-const VERSION = "mishwari-v6";
+const VERSION = "mishwari-v7";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon-maskable-512.png"];
 
 self.addEventListener("install", e => {
